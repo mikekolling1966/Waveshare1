@@ -1,81 +1,62 @@
-// ===========================
-// 12/08/2025 12:07 Has colour Scale and decent Fonts, just a stray extra needle for some reason
-// ===========================
-
 #include "Waveshare_ESP32_S3_Touch_LCD_4.h"
 #include "tca_expander_reset_dance.h"
 #include <Arduino.h>
 #include <TCA9554.h>
 #include <Arduino_GFX_Library.h>
 #include <TAMC_GT911.h>
-#include <PCF85063A-SOLDERED.h> // RTC on board, with a battery backup
-#include <ESP32time.h> // Internal RTC on the ESP32, no backup battery
+#include <PCF85063A-SOLDERED.h>
+#include <ESP32time.h>
 #include <driver/twai.h>
 #include "can_bus_twai.h"
 #include <lvgl.h>
-
 #include <math.h>
 
 // ===========================
-// UI Elements (BBN Inspired)
+// UI Elements
 // ===========================
 static lv_obj_t* wind_meter = NULL;
-static lv_meter_indicator_t* awa_needle = NULL; // Apparent Wind Angle
-static lv_meter_indicator_t* twa_needle = NULL; // True Wind Angle (placeholder)
-static lv_obj_t* awa_label = NULL; // Big label for Angle
-static lv_obj_t* aws_label = NULL; // Smaller label for Speed
-
-// Forward declarations
-void wind_create_ui(lv_obj_t* parent);
-void main_screen_create_cb(lv_timer_t * timer);
+static lv_meter_indicator_t* wind_needle = NULL; // We only need ONE needle
+static lv_obj_t* angle_label = NULL;
+static lv_obj_t* speed_label = NULL;
 
 // This function updates the UI with new values
-void wind_update(float apparent_wind_angle, float true_wind_angle, float apparent_wind_speed) {
-  if (wind_meter == NULL) return; // Don't update if UI not ready
+void wind_update(float wind_angle, float wind_speed) {
+  if (wind_meter == NULL) return;
 
-  // Update the needle positions
-  lv_meter_set_indicator_value(wind_meter, awa_needle, (int32_t)apparent_wind_angle);
-  lv_meter_set_indicator_value(wind_meter, twa_needle, (int32_t)true_wind_angle);
+  // Update the single needle's position
+  lv_meter_set_indicator_value(wind_meter, wind_needle, (int32_t)wind_angle);
   
-  // Manually convert ALL float values to strings before displaying
+  // Manually convert float values to strings for display
   char angle_buf[16];
-  dtostrf(apparent_wind_angle, 3, 0, angle_buf);
-  lv_label_set_text(awa_label, angle_buf);
+  dtostrf(wind_angle, 3, 0, angle_buf);
+  lv_label_set_text(angle_label, angle_buf);
 
   char speed_buf[16]; 
-  dtostrf(apparent_wind_speed, 3, 1, speed_buf);
+  dtostrf(wind_speed, 3, 1, speed_buf);
   strcat(speed_buf, " kn");
-  lv_label_set_text(aws_label, speed_buf);
+  lv_label_set_text(speed_label, speed_buf);
 }
 
-
-// This function creates the main compass UI, inspired by BBN
+// This function creates the main compass UI
 void wind_create_ui(lv_obj_t* parent) {
-  // Clear the screen of any previous objects (like the splash screen label)
   lv_obj_clean(parent);
-    
-  // Set a black background to match the BBN style
   lv_obj_set_style_bg_color(parent, lv_color_black(), 0);
   lv_obj_set_style_bg_opa(parent, LV_OPA_COVER, 0);
 
-  // --- Create the Meter ---
   wind_meter = lv_meter_create(parent);
-  lv_obj_remove_style_all(wind_meter); // Remove default styles for a custom look
-  lv_obj_set_size(wind_meter, 300, 300);
+  lv_obj_remove_style_all(wind_meter);
+  lv_obj_set_size(wind_meter, 400, 400);
   lv_obj_center(wind_meter);
 
-  // --- Create the Scale and Ticks ---
   lv_meter_scale_t* scale = lv_meter_add_scale(wind_meter);
-  // Minor ticks (grey)
-  lv_meter_set_scale_ticks(wind_meter, scale, 73, 2, 10, lv_palette_main(LV_PALETTE_GREY));
-  // Major ticks and numbers (white)
-  lv_meter_set_scale_major_ticks(wind_meter, scale, 12, 4, 20, lv_color_white(), 15);
   lv_meter_set_scale_range(wind_meter, scale, 0, 360, 360, 270);
-  // **** FIX: Set the color of the number labels on the scale ****
+
+  // **** FIX 1: Corrected compass numbering (0, 90, 180, 270) ****
+  lv_meter_set_scale_ticks(wind_meter, scale, 37, 2, 10, lv_palette_main(LV_PALETTE_GREY));
+  lv_meter_set_scale_major_ticks(wind_meter, scale, 9, 4, 20, lv_color_white(), 15);
   lv_obj_set_style_text_color(wind_meter, lv_color_white(), LV_PART_TICKS);
 
-
-  // --- Add Red (Port) and Green (Starboard) Arcs ---
+  // Add Red (Port) and Green (Starboard) Arcs
   lv_meter_indicator_t* arc_green = lv_meter_add_arc(wind_meter, scale, 10, lv_palette_main(LV_PALETTE_GREEN), 0);
   lv_meter_set_indicator_start_value(wind_meter, arc_green, 1);
   lv_meter_set_indicator_end_value(wind_meter, arc_green, 180);
@@ -84,39 +65,28 @@ void wind_create_ui(lv_obj_t* parent) {
   lv_meter_set_indicator_start_value(wind_meter, arc_red, 181);
   lv_meter_set_indicator_end_value(wind_meter, arc_red, 359);
   
-  // --- Add the Needles ---
-  awa_needle = lv_meter_add_needle_line(wind_meter, scale, 4, lv_palette_main(LV_PALETTE_BLUE), -20);
-  twa_needle = lv_meter_add_needle_line(wind_meter, scale, 2, lv_palette_main(LV_PALETTE_GREY), -20);
+  // **** FIX 2: Removed the second "shadow" needle ****
+  wind_needle = lv_meter_add_needle_line(wind_meter, scale, 4, lv_palette_main(LV_PALETTE_BLUE), -20);
 
-  // --- Create the Text Labels ---
-  // **** FIX: Create a container to hold the central labels correctly ****
+  // Create a container to hold the central labels correctly
   lv_obj_t* label_cont = lv_obj_create(parent);
-  lv_obj_remove_style_all(label_cont); // Make container invisible
+  lv_obj_remove_style_all(label_cont);
   lv_obj_set_size(label_cont, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
   lv_obj_center(label_cont);
   lv_obj_set_flex_flow(label_cont, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(label_cont, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_gap(label_cont, 10, 0);
 
-  // Large central label for Wind Angle (added to the container)
-  awa_label = lv_label_create(label_cont);
-  lv_obj_set_style_text_font(awa_label, &lv_font_montserrat_48, 0);
-  lv_obj_set_style_text_color(awa_label, lv_color_white(), 0);
-  lv_label_set_text(awa_label, "---");
+  angle_label = lv_label_create(label_cont);
+  lv_obj_set_style_text_font(angle_label, &lv_font_montserrat_48, 0);
+  lv_obj_set_style_text_color(angle_label, lv_color_white(), 0);
+  lv_label_set_text(angle_label, "---");
 
-  // Smaller label below for Wind Speed (added to the container)
-  aws_label = lv_label_create(label_cont);
-  lv_obj_set_style_text_font(aws_label, &lv_font_montserrat_28, 0);
-  lv_obj_set_style_text_color(aws_label, lv_color_white(), 0);
-  lv_label_set_text(aws_label, "--.- kn");
+  speed_label = lv_label_create(label_cont);
+  lv_obj_set_style_text_font(speed_label, &lv_font_montserrat_28, 0);
+  lv_obj_set_style_text_color(speed_label, lv_color_white(), 0);
+  lv_label_set_text(speed_label, "--.- kn");
 }
-
-
-// This function will be called by a timer to create the main screen
-void main_screen_create_cb(lv_timer_t * timer) {
-    wind_create_ui(lv_scr_act());
-}
-
 
 #include <Ticker.h>
 #include <HardwareSerial.h>
@@ -182,11 +152,23 @@ void setup() {
     external_rtc.setDate(2, 1, 4, 2025);
   }
   internal_rtc.setTime(external_rtc.getSecond(), external_rtc.getMinute(), external_rtc.getHour(), external_rtc.getDay(), external_rtc.getMonth(), external_rtc.getYear());
+  
+  // **** FIX 3: Restored your original bitmap splash screen ****
   tft->begin();
+  tft->flush();
+  for (uint16_t x_coord = 0; x_coord < TFT_WIDTH; x_coord++) {
+    for (uint16_t y_coord = 0; y_coord < TFT_HEIGHT; y_coord++) {
+      tft->writePixel(x_coord, y_coord, tft->color565(x_coord << 1, (x_coord + y_coord) << 2, y_coord << 1));
+    }
+  }
+  tft->flush();
+  delay(2500);
+
   touch_panel.reset();
   touch_panel.begin();
   touch_panel.setRotation(TAMC_GT911_ROTATION);
   touch_panel.setResolution(TFT_WIDTH, TFT_HEIGHT);
+  
   lv_init();
   frame_buffer = (lv_color_t *)heap_caps_malloc(sizeof(lv_color_t) * TFT_WIDTH * TFT_HEIGHT, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   if(frame_buffer == NULL) {
@@ -200,21 +182,14 @@ void setup() {
   display_driver.flush_cb = my_disp_flush;
   display_driver.draw_buf = &draw_buffer;
   lv_disp_drv_register(&display_driver);
+  
   static lv_indev_drv_t indev_drv;
   lv_indev_drv_init(&indev_drv);
   indev_drv.type = LV_INDEV_TYPE_POINTER;
   indev_drv.read_cb = my_input_read;
   lv_indev_drv_register(&indev_drv);
   
-  // --- SPLASH SCREEN ---
-  lv_obj_set_style_bg_color(lv_scr_act(), lv_color_black(), 0);
-  lv_obj_t *label = lv_label_create(lv_scr_act());
-  lv_label_set_text(label, "LVGL V" GFX_STR(LVGL_VERSION_MAJOR) "." GFX_STR(LVGL_VERSION_MINOR) "." GFX_STR(LVGL_VERSION_PATCH));
-  lv_obj_set_style_text_color(label, lv_color_white(), 0);
-  lv_obj_align(label, LV_ALIGN_CENTER, 0, 0);
-
-  // --- TIMER TO LOAD MAIN UI ---
-  lv_timer_create(main_screen_create_cb, 2500, NULL);
+  wind_create_ui(lv_scr_act());
 
   Serial.printf("Setup complete. Available PSRAM: %d KB\n", heap_caps_get_free_size(MALLOC_CAP_SPIRAM)>>10);
 }
@@ -222,20 +197,17 @@ void setup() {
 void loop() {
   lv_task_handler();
 
-  // Demo values
-  static float awa = 0;
-  static float twa = 20;
-  static float aws = 0;
+  static float angle = 0;
+  static float speed = 0;
   
   static uint32_t last_update = 0;
   if (millis() - last_update > 100) {
     last_update = millis();
     
-    awa = fmodf(awa + 5.0f, 360.0f);
-    twa = fmodf(twa + 5.0f, 360.0f);
-    aws = fmodf(aws + 0.7f, 25.0f);
+    angle = fmodf(angle + 5.0f, 360.0f);
+    speed = fmodf(speed + 0.7f, 25.0f);
     
-    wind_update(awa, twa, aws);
+    wind_update(angle, speed);
   }
 
   if (RS485.available() > 0) {
