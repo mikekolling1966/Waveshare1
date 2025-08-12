@@ -25,14 +25,11 @@ void wind_update(float wind_angle, float wind_speed) {
 
   lv_meter_set_indicator_value(wind_meter, wind_needle, (int32_t)wind_angle);
   
-  // Create the angle string
   char angle_buf[16];
   dtostrf(wind_angle, 3, 0, angle_buf);
-  // **** THIS IS THE FIX: Add " deg" to the angle string ****
   strcat(angle_buf, " deg");
   lv_label_set_text(angle_label, angle_buf);
 
-  // Create the speed string
   char speed_buf[16]; 
   dtostrf(wind_speed, 3, 1, speed_buf);
   strcat(speed_buf, " kn");
@@ -77,8 +74,21 @@ void wind_create_ui(lv_obj_t* parent) {
   lv_meter_set_indicator_start_value(wind_meter, arc_red, 181);
   lv_meter_set_indicator_end_value(wind_meter, arc_red, 359);
   
-  wind_needle = lv_meter_add_needle_line(wind_meter, scale, 4, lv_palette_main(LV_PALETTE_BLUE), -20);
+  // Create the needle. A small negative r_mod just shortens it from the tip so it looks clean.
+  wind_needle = lv_meter_add_needle_line(wind_meter, scale, 10, lv_palette_main(LV_PALETTE_YELLOW), -20);
 
+  // **** THE FIX: Create a black circle to cover the center of the gauge ****
+  lv_obj_t* center_cover = lv_obj_create(parent);
+  lv_obj_remove_style_all(center_cover); // Start with a clean object
+  lv_obj_set_size(center_cover, 160, 160); // Set the size of the central blank area
+  lv_obj_set_style_bg_color(center_cover, lv_color_black(), 0);
+  lv_obj_set_style_bg_opa(center_cover, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(center_cover, LV_RADIUS_CIRCLE, 0); // Make it a circle
+  lv_obj_set_style_border_width(center_cover, 0, 0);
+  lv_obj_center(center_cover); // Place it in the center of the screen
+
+
+  // Create a container for our labels, which will sit on top of the cover
   lv_obj_t* label_cont = lv_obj_create(parent);
   lv_obj_remove_style_all(label_cont);
   lv_obj_set_size(label_cont, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
@@ -87,13 +97,17 @@ void wind_create_ui(lv_obj_t* parent) {
   lv_obj_set_flex_align(label_cont, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_gap(label_cont, 10, 0);
 
-  // Angle label (smaller font)
+  // "WIND" Title Label
+lv_obj_t* wind_title_label = lv_label_create(label_cont);
+lv_obj_set_style_text_font(wind_title_label, &lv_font_montserrat_48, 0);
+lv_obj_set_style_text_color(wind_title_label, lv_color_white(), 0);
+lv_label_set_text(wind_title_label, "WIND");
+
   angle_label = lv_label_create(label_cont);
   lv_obj_set_style_text_font(angle_label, &lv_font_montserrat_28, 0);
   lv_obj_set_style_text_color(angle_label, lv_color_white(), 0);
   lv_label_set_text(angle_label, "--- deg");
 
-  // Speed label (larger font)
   speed_label = lv_label_create(label_cont);
   lv_obj_set_style_text_font(speed_label, &lv_font_montserrat_48, 0);
   lv_obj_set_style_text_color(speed_label, lv_color_white(), 0);
