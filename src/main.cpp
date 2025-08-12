@@ -85,6 +85,7 @@ lv_obj_align(title_label, LV_ALIGN_TOP_LEFT, 10, 10);
   
   // Create the needle. A small negative r_mod just shortens it from the tip so it looks clean.
   wind_needle = lv_meter_add_needle_line(wind_meter, scale, 10, lv_palette_main(LV_PALETTE_YELLOW), -20);
+  
 
   // **** THE FIX: Create a black circle to cover the center of the gauge ****
   lv_obj_t* center_cover = lv_obj_create(parent);
