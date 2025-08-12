@@ -1,8 +1,3 @@
-// ===========================
-// 12/08/25 12:19
-// ===========================
-
-
 #include "Waveshare_ESP32_S3_Touch_LCD_4.h"
 #include "tca_expander_reset_dance.h"
 #include <Arduino.h>
@@ -20,7 +15,7 @@
 // UI Elements
 // ===========================
 static lv_obj_t* wind_meter = NULL;
-static lv_meter_indicator_t* wind_needle = NULL; // We only need ONE needle
+static lv_meter_indicator_t* wind_needle = NULL;
 static lv_obj_t* angle_label = NULL;
 static lv_obj_t* speed_label = NULL;
 
@@ -28,18 +23,30 @@ static lv_obj_t* speed_label = NULL;
 void wind_update(float wind_angle, float wind_speed) {
   if (wind_meter == NULL) return;
 
-  // Update the single needle's position
   lv_meter_set_indicator_value(wind_meter, wind_needle, (int32_t)wind_angle);
   
-  // Manually convert float values to strings for display
+  // Create the angle string
   char angle_buf[16];
   dtostrf(wind_angle, 3, 0, angle_buf);
+  // **** THIS IS THE FIX: Add " deg" to the angle string ****
+  strcat(angle_buf, " deg");
   lv_label_set_text(angle_label, angle_buf);
 
+  // Create the speed string
   char speed_buf[16]; 
   dtostrf(wind_speed, 3, 1, speed_buf);
   strcat(speed_buf, " kn");
   lv_label_set_text(speed_label, speed_buf);
+}
+
+// Event handler to customize the meter's labels
+static void meter_event_cb(lv_event_t * e) {
+    lv_obj_draw_part_dsc_t * dsc = lv_event_get_draw_part_dsc(e);
+    if (dsc->part == LV_PART_TICKS && dsc->text != NULL) {
+        if (dsc->value == 360) {
+            lv_snprintf(dsc->text, dsc->text_length, "0");
+        }
+    }
 }
 
 // This function creates the main compass UI
@@ -50,18 +57,18 @@ void wind_create_ui(lv_obj_t* parent) {
 
   wind_meter = lv_meter_create(parent);
   lv_obj_remove_style_all(wind_meter);
-  lv_obj_set_size(wind_meter, 400, 400);
+  lv_obj_set_size(wind_meter, 400, 400); 
   lv_obj_center(wind_meter);
+
+  lv_obj_add_event_cb(wind_meter, meter_event_cb, LV_EVENT_DRAW_PART_BEGIN, NULL);
 
   lv_meter_scale_t* scale = lv_meter_add_scale(wind_meter);
   lv_meter_set_scale_range(wind_meter, scale, 0, 360, 360, 270);
-
-  // **** FIX 1: Corrected compass numbering (0, 90, 180, 270) ****
+  
   lv_meter_set_scale_ticks(wind_meter, scale, 37, 2, 10, lv_palette_main(LV_PALETTE_GREY));
   lv_meter_set_scale_major_ticks(wind_meter, scale, 9, 4, 20, lv_color_white(), 15);
   lv_obj_set_style_text_color(wind_meter, lv_color_white(), LV_PART_TICKS);
 
-  // Add Red (Port) and Green (Starboard) Arcs
   lv_meter_indicator_t* arc_green = lv_meter_add_arc(wind_meter, scale, 10, lv_palette_main(LV_PALETTE_GREEN), 0);
   lv_meter_set_indicator_start_value(wind_meter, arc_green, 1);
   lv_meter_set_indicator_end_value(wind_meter, arc_green, 180);
@@ -70,10 +77,8 @@ void wind_create_ui(lv_obj_t* parent) {
   lv_meter_set_indicator_start_value(wind_meter, arc_red, 181);
   lv_meter_set_indicator_end_value(wind_meter, arc_red, 359);
   
-  // **** FIX 2: Removed the second "shadow" needle ****
   wind_needle = lv_meter_add_needle_line(wind_meter, scale, 4, lv_palette_main(LV_PALETTE_BLUE), -20);
 
-  // Create a container to hold the central labels correctly
   lv_obj_t* label_cont = lv_obj_create(parent);
   lv_obj_remove_style_all(label_cont);
   lv_obj_set_size(label_cont, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
@@ -82,13 +87,15 @@ void wind_create_ui(lv_obj_t* parent) {
   lv_obj_set_flex_align(label_cont, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_gap(label_cont, 10, 0);
 
+  // Angle label (smaller font)
   angle_label = lv_label_create(label_cont);
-  lv_obj_set_style_text_font(angle_label, &lv_font_montserrat_48, 0);
+  lv_obj_set_style_text_font(angle_label, &lv_font_montserrat_28, 0);
   lv_obj_set_style_text_color(angle_label, lv_color_white(), 0);
-  lv_label_set_text(angle_label, "---");
+  lv_label_set_text(angle_label, "--- deg");
 
+  // Speed label (larger font)
   speed_label = lv_label_create(label_cont);
-  lv_obj_set_style_text_font(speed_label, &lv_font_montserrat_28, 0);
+  lv_obj_set_style_text_font(speed_label, &lv_font_montserrat_48, 0);
   lv_obj_set_style_text_color(speed_label, lv_color_white(), 0);
   lv_label_set_text(speed_label, "--.- kn");
 }
@@ -158,7 +165,6 @@ void setup() {
   }
   internal_rtc.setTime(external_rtc.getSecond(), external_rtc.getMinute(), external_rtc.getHour(), external_rtc.getDay(), external_rtc.getMonth(), external_rtc.getYear());
   
-  // **** FIX 3: Restored your original bitmap splash screen ****
   tft->begin();
   tft->flush();
   for (uint16_t x_coord = 0; x_coord < TFT_WIDTH; x_coord++) {
