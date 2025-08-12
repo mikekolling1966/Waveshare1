@@ -52,6 +52,15 @@ void wind_create_ui(lv_obj_t* parent) {
   lv_obj_set_style_bg_color(parent, lv_color_black(), 0);
   lv_obj_set_style_bg_opa(parent, LV_OPA_COVER, 0);
 
+
+  // --- "MANXMAN" Title Label ---
+lv_obj_t* title_label = lv_label_create(parent);
+lv_label_set_text(title_label, "MANXMAN");
+lv_obj_set_style_text_font(title_label, &lv_font_montserrat_28, 0); // Uses the same font as the angle
+lv_obj_set_style_text_color(title_label, lv_color_white(), 0);
+// Align to the top-left corner with a 10-pixel margin
+lv_obj_align(title_label, LV_ALIGN_TOP_LEFT, 10, 10);
+
   wind_meter = lv_meter_create(parent);
   lv_obj_remove_style_all(wind_meter);
   lv_obj_set_size(wind_meter, 400, 400); 
