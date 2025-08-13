@@ -163,14 +163,14 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
   }
 }
 
-void show_config_message() {
+void show_config_message(const char* ap_name) {
     lv_obj_clean(lv_scr_act());
     lv_obj_set_style_bg_color(lv_scr_act(), lv_color_black(), 0);
     lv_obj_t* label = lv_label_create(lv_scr_act());
-    lv_label_set_text(label, "No WiFi Connection\n\n"
-                             "Connect to AP:\n"
-                             "MANXMAN_ConfigAP\n\n"
-                             "Go to 192.168.4.1 in browser");
+    lv_label_set_text_fmt(label, "No WiFi Connection\n\n"
+                                 "Connect to AP:\n"
+                                 "%s\n\n"
+                                 "Go to 192.168.4.1 in browser", ap_name);
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_color(label, lv_color_white(), 0);
     lv_obj_set_style_text_font(label, &lv_font_montserrat_28, 0);
@@ -204,9 +204,27 @@ void my_input_read(lv_indev_drv_t *indev_driver, lv_indev_data_t *data) {
 void ticker_call_function(void) { lv_tick_inc(5); }
 
 void setup() {
-  M5.begin();
+  auto cfg = M5.config();
+  M5.begin(cfg);
+  
   int screen_width = M5.Lcd.width();
   int screen_height = M5.Lcd.height();
+
+  // **** THE FIX: Check for config request button BEFORE starting WiFi ****
+  M5.update(); // Read button state
+  if (M5.BtnA.isPressed()) {
+    M5.Lcd.fillScreen(TFT_BLACK);
+    M5.Lcd.setCursor(20, 20);
+    M5.Lcd.setTextColor(TFT_WHITE);
+    M5.Lcd.setTextSize(2);
+    M5.Lcd.println("Button A Pressed.");
+    M5.Lcd.println("Erasing WiFi settings...");
+    WiFiManager wm;
+    wm.resetSettings();
+    M5.Lcd.println("Restarting into Config Mode.");
+    delay(3000);
+    ESP.restart();
+  }
 
   ticker.attach_ms(5, ticker_call_function);
   
@@ -225,23 +243,36 @@ void setup() {
   indev_drv.read_cb = my_input_read;
   lv_indev_drv_register(&indev_drv);
   
+  // --- WiFi and Config Portal Logic ---
   WiFiManager wm;
-  WiFiManagerParameter custom_sk_host("server", "Signal K IP", sk_server_host, 40);
-  wm.addParameter(&custom_sk_host);
-  wm.setAPCallback([](WiFiManager* myWiFiManager) {
-    show_config_message();
-  });
+  const char* ap_name = "MANXMAN_ConfigAP";
+  
+  lv_obj_clean(lv_scr_act());
+  lv_obj_set_style_bg_color(lv_scr_act(), lv_color_black(), 0);
+  lv_obj_t* connecting_label = lv_label_create(lv_scr_act());
+  lv_label_set_text(connecting_label, "Connecting to WiFi...");
+  lv_obj_set_style_text_color(connecting_label, lv_color_white(), 0);
+  lv_obj_center(connecting_label);
+  lv_task_handler();
 
-  Serial.println("Starting WiFiManager...");
-  if (!wm.autoConnect("MANXMAN_ConfigAP")) {
-    Serial.println("Failed to connect and hit timeout. Restarting...");
-    delay(3000);
-    ESP.restart();
+  wm.setConnectTimeout(20);
+  if (!wm.autoConnect(ap_name)) {
+      show_config_message(ap_name);
+      // Sit here and wait until the user finishes config or the portal times out
+      unsigned long startTime = millis();
+      while(millis() - startTime < 180000) { // 3 minute timeout
+        wm.process();
+        delay(50);
+      }
+      Serial.println("Config portal timed out. Restarting...");
+      ESP.restart();
   }
   
   Serial.println("WiFi Connected!");
+  
+  WiFiManagerParameter custom_sk_host("server", "Signal K IP", sk_server_host, 40);
+  wm.addParameter(&custom_sk_host);
   strcpy(sk_server_host, custom_sk_host.getValue());
-  Serial.printf("Using Signal K server at: %s\n", sk_server_host);
   
   wind_create_ui(lv_scr_act());
   wind_update(0, 0);
@@ -257,15 +288,6 @@ void loop() {
   lv_task_handler();
   webSocket.loop();
   M5.update();
-
-  // **** NEW: Check for physical button press ****
-  if (M5.BtnA.wasPressed()) {
-    Serial.println("Button A pressed. Erasing WiFi credentials and restarting...");
-    WiFiManager wm;
-    wm.resetSettings();
-    delay(100);
-    ESP.restart();
-  }
 
   static uint32_t last_display_update = 0;
   if (millis() - last_display_update > 250) {
