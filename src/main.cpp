@@ -1,8 +1,3 @@
-// ===========================
-// 13/08/2025 10:45 seems to be reading successfully fron signalk
-// ===========================
-
-
 #include "Waveshare_ESP32_S3_Touch_LCD_4.h"
 #include "tca_expander_reset_dance.h"
 #include <Arduino.h>
@@ -17,15 +12,15 @@
 #include <math.h>
 
 #include <WiFi.h>
+#include <WebServer.h>
+#include <DNSServer.h>
+#include <WiFiManager.h>
 #include <WebSocketsClient.h>
 #include <ArduinoJson.h>
 
 // ===========================
 // --- Network Configuration ---
-const char* WIFI_SSID = "VM2FA118";
-const char* WIFI_PASSWORD = "Vwkc5bdgGvxs";
-
-const char* SK_SERVER_HOST = "192.168.0.191";
+char sk_server_host[40] = "192.168.0.191";
 const uint16_t SK_SERVER_PORT = 3000;
 const char* SK_SERVER_PATH = "/signalk/v1/stream";
 
@@ -57,7 +52,6 @@ void wind_update(float wind_angle, float wind_speed) {
   lv_label_set_text(speed_label, speed_buf);
 }
 
-// **** FIX 1: The correct, working event handler to change "360" to "0" ****
 static void meter_event_cb(lv_event_t * e) {
     lv_obj_draw_part_dsc_t * dsc = lv_event_get_draw_part_dsc(e);
     if (dsc->part == LV_PART_TICKS && dsc->text != NULL) {
@@ -76,19 +70,31 @@ void wind_create_ui(lv_obj_t* parent) {
   lv_obj_set_style_text_font(title_label, &lv_font_montserrat_28, 0);
   lv_obj_set_style_text_color(title_label, lv_color_white(), 0);
   lv_obj_align(title_label, LV_ALIGN_TOP_LEFT, 10, 10);
+
+  // **** NEW SECTION 1: Add the Settings button ****
+  lv_obj_t* config_button = lv_btn_create(parent);
+  lv_obj_align(config_button, LV_ALIGN_TOP_RIGHT, -10, 10);
+  lv_obj_t* icon = lv_label_create(config_button);
+  lv_label_set_text(icon, LV_SYMBOL_SETTINGS);
+  lv_obj_center(icon);
+  void config_button_event_cb(lv_event_t * e); // Forward declaration
+  lv_obj_add_event_cb(config_button, config_button_event_cb, LV_EVENT_CLICKED, NULL);
+
   wind_meter = lv_meter_create(parent);
   lv_obj_remove_style_all(wind_meter);
   lv_obj_set_size(wind_meter, 400, 400); 
   lv_obj_center(wind_meter);
-  
-  // Add the event callback to the meter
   lv_obj_add_event_cb(wind_meter, meter_event_cb, LV_EVENT_DRAW_PART_BEGIN, NULL);
-
   lv_meter_scale_t* scale = lv_meter_add_scale(wind_meter);
-  lv_meter_set_scale_range(wind_meter, scale, 0, 360, 360, 270);
+  lv_meter_set_scale_range(wind_meter, scale, 0, 359, 360, 270);
   lv_meter_set_scale_ticks(wind_meter, scale, 37, 2, 10, lv_palette_main(LV_PALETTE_GREY));
   lv_meter_set_scale_major_ticks(wind_meter, scale, 9, 4, 20, lv_color_white(), 15);
   lv_obj_set_style_text_color(wind_meter, lv_color_white(), LV_PART_TICKS);
+  lv_obj_t* zero_label = lv_label_create(parent);
+  lv_obj_set_style_text_font(zero_label, lv_obj_get_style_text_font(wind_meter, LV_PART_TICKS), 0);
+  lv_obj_set_style_text_color(zero_label, lv_color_white(), 0);
+  lv_label_set_text(zero_label, "0");
+  lv_obj_align_to(zero_label, wind_meter, LV_ALIGN_TOP_MID, 0, 35);
   lv_meter_indicator_t* arc_green = lv_meter_add_arc(wind_meter, scale, 10, lv_palette_main(LV_PALETTE_GREEN), 0);
   lv_meter_set_indicator_start_value(wind_meter, arc_green, 1);
   lv_meter_set_indicator_end_value(wind_meter, arc_green, 180);
@@ -125,7 +131,17 @@ void wind_create_ui(lv_obj_t* parent) {
   lv_label_set_text(speed_label, "--.- kn");
 }
 
-// This function runs whenever a new message comes from the Signal K server
+// **** NEW SECTION 2: The button's event handler function ****
+void config_button_event_cb(lv_event_t * e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    if (code == LV_EVENT_CLICKED) {
+        Serial.println("Settings button clicked. Erasing WiFi credentials and restarting into config mode...");
+        WiFi.disconnect(true, true); 
+        delay(100); 
+        ESP.restart();
+    }
+}
+
 void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
   switch(type) {
     case WStype_DISCONNECTED:
@@ -136,15 +152,12 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
       StaticJsonDocument<256> doc;
       doc["context"] = "vessels.self";
       JsonArray subscribe = doc.createNestedArray("subscribe");
-      
-      // **** FIX 2: Subscribing to APPARENT wind data ****
       JsonObject subscribe_awa = subscribe.createNestedObject();
       subscribe_awa["path"] = "environment.wind.angleApparent";
       subscribe_awa["period"] = 1000;
       JsonObject subscribe_aws = subscribe.createNestedObject();
       subscribe_aws["path"] = "environment.wind.speedApparent";
       subscribe_aws["period"] = 1000;
-      
       String json_string;
       serializeJson(doc, json_string);
       webSocket.sendTXT(json_string);
@@ -162,17 +175,11 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
           for (JsonObject value_pair : values) {
             const char* path = value_pair["path"];
             if (!path) continue;
-            
-            // **** FIX 2: Reading APPARENT wind data and converting angle ****
             if (strcmp(path, "environment.wind.angleApparent") == 0) {
               double angle_rad = value_pair["value"];
               double angle_deg = angle_rad * 180.0 / PI;
-              // Apparent angle is -180 to +180. Convert to 0-360 for a compass.
-              if (angle_deg < 0) {
-                g_wind_angle_deg = 360.0 + angle_deg;
-              } else {
-                g_wind_angle_deg = angle_deg;
-              }
+              if (angle_deg < 0) { g_wind_angle_deg = 360.0 + angle_deg; } 
+              else { g_wind_angle_deg = angle_deg; }
             } else if (strcmp(path, "environment.wind.speedApparent") == 0) {
               double speed_mps = value_pair["value"];
               g_wind_speed_knots = speed_mps * 1.94384;
@@ -185,6 +192,21 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
     default:
       break;
   }
+}
+
+void show_config_message() {
+    lv_obj_clean(lv_scr_act());
+    lv_obj_set_style_bg_color(lv_scr_act(), lv_color_black(), 0);
+    lv_obj_t* label = lv_label_create(lv_scr_act());
+    lv_label_set_text(label, "No WiFi Connection\n\n"
+                             "Connect to AP:\n"
+                             "MANXMAN_ConfigAP\n\n"
+                             "Go to 192.168.4.1 in browser");
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(label, lv_color_white(), 0);
+    lv_obj_set_style_text_font(label, &lv_font_montserrat_28, 0);
+    lv_obj_center(label);
+    lv_task_handler();
 }
 
 #include <Ticker.h>
@@ -207,28 +229,12 @@ void my_input_read(lv_indev_drv_t *indev_driver, lv_indev_data_t *data) { touch_
 
 void setup() {
   Serial.begin(115200);
-  
-  Serial.printf("Connecting to %s ", WIFI_SSID);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
-  Serial.println(" Connected!");
-  Serial.print("IP Address: ");
-  Serial.println(WiFi.localIP());
 
   tca_expander_reset_dance();
   ticker.attach_ms(TICKER_MS, ticker_call_function);
   
-  // **** FIX 3: Restored your original bitmap splash screen ****
   tft->begin();
-  tft->flush();
-  for (uint16_t x_coord = 0; x_coord < TFT_WIDTH; x_coord++) {
-    for (uint16_t y_coord = 0; y_coord < TFT_HEIGHT; y_coord++) {
-      tft->writePixel(x_coord, y_coord, tft->color565(x_coord << 1, (x_coord + y_coord) << 2, y_coord << 1));
-    }
-  }
-  tft->flush();
-  delay(2500);
-
+  
   touch_panel.reset();
   touch_panel.begin();
   touch_panel.setRotation(TAMC_GT911_ROTATION);
@@ -246,10 +252,31 @@ void setup() {
   indev_drv.type = LV_INDEV_TYPE_POINTER; indev_drv.read_cb = my_input_read;
   lv_indev_drv_register(&indev_drv);
   
+  WiFiManager wm;
+  WiFiManagerParameter custom_sk_host("server", "Signal K IP", sk_server_host, 40);
+  wm.addParameter(&custom_sk_host);
+  wm.setAPCallback([](WiFiManager* myWiFiManager) {
+    show_config_message();
+  });
+
+  Serial.println("Starting WiFiManager...");
+  if (!wm.autoConnect("MANXMAN_ConfigAP")) {
+    Serial.println("Failed to connect and hit timeout. Restarting...");
+    delay(3000);
+    ESP.restart();
+  }
+  
+  Serial.println("WiFi Connected!");
+  Serial.print("IP Address: ");
+  Serial.println(WiFi.localIP());
+
+  strcpy(sk_server_host, custom_sk_host.getValue());
+  Serial.printf("Using Signal K server at: %s\n", sk_server_host);
+
   wind_create_ui(lv_scr_act());
   wind_update(0, 0);
 
-  webSocket.begin(SK_SERVER_HOST, SK_SERVER_PORT, SK_SERVER_PATH);
+  webSocket.begin(sk_server_host, SK_SERVER_PORT, SK_SERVER_PATH);
   webSocket.onEvent(webSocketEvent);
   webSocket.setReconnectInterval(5000);
 
@@ -260,9 +287,9 @@ void loop() {
   lv_task_handler();
   webSocket.loop();
 
-  static uint32_t last_update = 0;
-  if (millis() - last_update > 250) {
-    last_update = millis();
+  static uint32_t last_display_update = 0;
+  if (millis() - last_display_update > 250) {
+    last_display_update = millis();
 
     if (millis() - last_data_received > 5000 && last_data_received != 0) {
         lv_label_set_text(angle_label, "--- deg");
