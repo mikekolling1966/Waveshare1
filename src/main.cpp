@@ -1,3 +1,8 @@
+// ===========================
+// 13/08/2025 10:45 seems to be reading successfully fron signalk
+// ===========================
+
+
 #include "Waveshare_ESP32_S3_Touch_LCD_4.h"
 #include "tca_expander_reset_dance.h"
 #include <Arduino.h>
